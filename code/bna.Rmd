@@ -1,0 +1,659 @@
+---
+title: "bna"
+author: "Ganesh Sharma"
+date: "2023-07-04"
+output: html_document
+---
+
+# Bayesian Network Analysis
+
+```{r,eval=FALSE,echo=FALSE}
+# install.packages("ParBayesianOptimization")
+# install.packages("scales")
+# install.packages("bnlearn")
+# install.packages("arules")
+# install.packages("visNetwork")
+# install.packages("doParallel")
+# install.packages("rsconnect")
+# install.packages("lme4")
+```
+
+Loading the libraries 
+```{r}
+suppressMessages(library(scales))
+suppressMessages(library(ParBayesianOptimization))
+suppressMessages(library(bnlearn))
+suppressMessages(library(arules))
+suppressMessages(library(visNetwork))
+suppressMessages(library(dplyr))
+suppressMessages(library(doParallel))
+suppressMessages(library(stringr))
+suppressMessages(library(readxl))
+suppressMessages(library(shiny))
+suppressMessages(library(plotly))
+suppressMessages(library(here))
+suppressMessages(library(lme4))
+```
+
+## Reading the Dataset
+The dataset has 20 columns and 372 rows. Columns type include characters, numeric and date formats.
+
+```{r}
+data <- read_excel(here("data/retail_data.xlsx"))
+dim(data) #372   20
+# head(data)
+# View(data)
+```
+
+
+
+### Analysis 1 : Cause-Effect Analysis
+
+The dataset complete.data does not contain any missing values but some columns like pmConsumedEnergy,noOfRxAntennas and noOfTxAntennas contain values 0 wherever data is not available. So we will consider these as missing values and will remove them from the dataset so as to build a reliable network for cause-effect analysis
+
+
+### 2) Checking the distribution of numeric variables in the dataset. If the distribution is normal, Gaussian Bayesian Network Model can be applied , else we will have to discretize the numeric dataset and use Discrete Bayesian Network Model
+
+```{r}
+# Checking normality of numeric variables
+
+numeric_vars<-names(select_if(data,is.numeric))
+#par(mfrow=c(2,2))
+#for(i in 1:length(numeric_vars)){
+  #hist(analysis_1.data[,numeric_vars[i]], main=numeric_vars[i],breaks = 1000)
+#}
+
+#Most of the numeric vars do no show normal distribution, hence we will discretize them.
+```
+
+
+### 3) Discretizing the numeric variables in the dataset.
+
+```{r}
+# discretizing the numeric variables in the dataset. We will use the function discretizeDF() from library "arules". 
+# We are discretizing the numeric variables in 15 different levels using interval method. set.seed(123) is used to 
+# get same discretization levels everytime we run this code given the range of data is same.
+
+set.seed(123)
+suppressWarnings(
+    
+    
+    data_discrete<- cbind(
+        select(
+            data,
+            -all_of(numeric_vars)
+        ),
+        discretizeDF(
+            as.data.frame(
+                select(
+                    data,
+                    all_of(numeric_vars)
+                )
+            ),
+            default = list(method = "interval", 
+                           breaks = 5,
+                           labels = 1:5
+                          )
+        )
+    )
+    
+    
+)
+
+
+data_discrete<-as.data.frame(lapply(data_discrete[colnames(data_discrete)],factor))
+```
+
+
+
+
+
+
+## Bayesian Network
+
+### Bayesian Network Structure Learning
+
+
+```{r}
+set.seed(123)
+suppressWarnings(bn.structure<-tabu(data_discrete,score="bde",tabu=1,iss=100))
+```
+
+
+### Bayesian Network Parameter Learning
+
+```{r}
+set.seed(123)
+suppressWarnings(bn.model<-bn.fit(bn.structure,data_discrete,method="bayes"))
+```
+
+### Accuracy
+
+Determining classification accuracy for each node in the bayesian network.
+
+```{r}
+score<-0
+score_1<-0
+
+  for(i in 1:ncol(data_discrete))
+    {
+  set.seed(123)
+  pred<-predict(bn.model,names(data_discrete[i]),data_discrete)
+  score[i]<-sum(pred==data_discrete[,i])*100/nrow(data_discrete) 
+  
+  }
+  score_1<-mean(score)
+score_1 #81.203554519519   #91.1719782584683
+#data.frame(colnames(analysis_1.data_discrete),score)
+
+
+# The average of all the node classification accuracies is 75.3419729020769
+```
+
+
+### Bayesian Hyper-Parameter Optimisation
+
+```{r,eval=FALSE}
+registerDoParallel()
+mean_score<-0
+#score<-1:ncol(analysis_1.data)
+
+
+scoringFunction<- function(tabu,iss,states)
+  {
+  
+  
+  
+set.seed(123)
+suppressWarnings(
+    
+    
+    data_discrete<- cbind(
+        select(
+            data,
+            -all_of(numeric_vars)
+        ),
+        discretizeDF(
+            as.data.frame(
+                select(
+                    data,
+                    all_of(numeric_vars)
+                )
+            ),
+            default = list(method = "interval", 
+                           breaks = states,
+                           labels = 1:states
+                          )
+        )
+    )
+    
+    
+)
+data_discrete<-as.data.frame(lapply(data_discrete[colnames(data_discrete)],factor))
+
+
+  set.seed(123)
+  bn_training <- tabu(
+                        data_discrete,
+                        score = "bde",
+                        iss = iss,
+                        tabu = tabu
+                        ,max.iter=100
+                        )
+  
+  set.seed(123)
+  H_dfit <- bn.fit(
+                  bn_training, 
+                  data_discrete
+                  )
+  
+  
+  
+  
+  #for(i in 1:ncol(analysis_1.data_discrete_training))
+    #{
+  #set.seed(123)
+  #pred<-predict(H_dfit,names(analysis_1.data_discrete_training[i]),analysis_1.data_discrete_training)
+  #score[i]<-sum(pred == analysis_1.data_discrete_training[,i])*100/nrow(analysis_1.data_discrete_training) 
+  
+  #}
+  #mean_score<-mean(score)
+  
+  set.seed(123)
+  pred<-predict(H_dfit,"Profit_Percentage",data_discrete)
+  s<-sum(pred==data_discrete$Profit_Percentage)*100/nrow(data_discrete)
+
+  return(list(Score = s))
+    
+  }
+
+  
+
+
+bounds<-list(tabu=c(1L,1000L),
+             iss=c(1L,100L),
+             states=c(15L,50L))
+
+set.seed(0)
+system.time(
+            optObj <- bayesOpt
+            (
+            FUN = scoringFunction,
+            bounds = bounds,
+            initPoints = 4,
+            iters.n = 4,
+            iters.k = 1,
+            acq="ei",
+            eps=0.01,
+            parallel = TRUE
+            )
+        )
+
+optObj$scoreSummary
+getBestPars(optObj)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Network Visualization
+
+```{r}
+# We are using "visNetwork" library for network visualization. The visualization shows an interactive bayesian network.
+# Clicking on any node will highlight the selected and all the related nodes. 
+
+plot.network <- function(structure, ht = "1200px"){
+  nodes.uniq <- unique(c(structure$arcs[,1], structure$arcs[,2]))
+  nodes <- data.frame(id = nodes.uniq,
+                      label = nodes.uniq,
+                      shadow = TRUE,
+                      shape = "dot",
+                      group = ifelse(nodes.uniq %in% c("Profit_Percentage"),"B","A"))
+
+  edges <- data.frame(from = structure$arcs[,1],
+                      to = structure$arcs[,2],
+                      arrows = "to",
+                      smooth = TRUE,
+                      shadow = TRUE,
+                      color = "#fbb34c")
+
+  return(visNetwork(nodes, edges, height = ht, width = "100%", main = "The retail data") %>%
+           visGroups(groupname = "A",color = "#9758a6") %>%
+           visOptions(highlightNearest = TRUE) %>%
+           visGroups(groupname = "B",color = "#8f8c2d"))
+}
+
+network<-plot.network(bn.structure)
+network
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Querying the Network
+
+### Markov Blanket
+
+Markov Blanket of a perticular node x includes the nodes which are strongly related (directly related) to the node x. It is group of parent, children and spouse(children's parents) nodes. Other than Markov blanket nodes, all nodes are conditionally independent of node x.
+
+```{r}
+#Determining all the nodes related to the event node. eg. what nodes will be affected by "pmConsumedEnergy" node. There is function in "bnlearn" package called mb() which means "markov blanket". It returns the vector of names of nodes related to the questioning node.
+
+
+related<-mb(bn.structure,"Profit_Percentage")
+related
+
+parent<-parents(bn.structure,"Profit_Percentage")
+parent
+
+table(data_discrete$gender)
+```
+
+
+
+
+
+## The main question I am addressing here is what is the recommendation to reduce the power consumption.
+
+```{r}
+#The function gives me the most likely (Maximum a posteriori) state of query node(s) given the state(s) of the evidence node(s). 
+
+#_____________________________
+#Function
+#_____________________________
+
+P<-function(x){
+    
+    a<-0
+    b<-0
+    node<-word(x,1,sep=fixed("|"))
+    temp<-word(x,2,sep=fixed("|"))
+    
+    evidence_1<-0
+    evidence_1_node<-0
+    evidence_1_value<-0
+    
+    num_of_evi<-sapply(strsplit(temp, ";"), length)
+    
+    
+    for(i in 1:num_of_evi){
+        evidence_1[i]<-word(temp,i,sep=fixed(";"))
+        evidence_1_node[i]<-word(evidence_1[i],1,sep=fixed("=="))
+        evidence_1_value[i]<-word(evidence_1[i],2,sep=fixed("=="))
+    }
+    
+    
+    
+    event_1<-0
+    event_1_node<-0
+    event_1_value<-0
+    
+    num_of_event<-sapply(strsplit(node, ";"), length)
+    
+    
+    for(i in 1:num_of_event){
+        event_1[i]<-word(node,i,sep=fixed(";"))
+    }
+    
+    
+    
+        
+    str = paste("(", evidence_1_node, " == '",
+        sapply(evidence_1_value, as.character), "')",
+        sep = "", collapse = " & ")
+    
+    str1<-paste(event_1,collapse="','")
+
+    
+    str2 <- paste("c('",str1,"')",sep="")
+    
+    set.seed(123)
+    cmd<-paste("cpdist(bn.model, nodes=c(", str2, "), evidence= ", str, ",n=1000000)", sep = "")
+    
+    a<-table(eval(parse(text = cmd)))
+    a<-a/sum(a)
+    #a<-data.frame(Node=rownames(a),Prob=as.numeric(a/sum(a))) %>% arrange(desc(Prob)) %>% head()
+    a<-as.data.frame(a)
+    b<-a[which(a$Freq==max(a$Freq)),]
+    
+    
+    return(b)
+}
+
+#_____________________________
+
+# for example.. let we want to enquire about the most likely state of "pmConsumedEnergy" (query node) given the evidence nodes "TAC" has state 513 and "Cell.Range" has state 16.
+P("Profit_Percentage|age==2;Work==FT")
+#This gives state number 8 as the most likely state for node "pmConsumedEnergy".
+
+
+# Similarly we can determine the most likely states for a combination of query nodes as well, given evidence node(s) state(s).
+P("TAC;Cell.Range|pmConsumedEnergy==15")
+
+```
+
+
+```{r}
+P("pmConsumedEnergy|DL.Traffic..kbps.==1")
+P("pmConsumedEnergy|DL.Traffic..kbps.==5")
+P("pmConsumedEnergy|DL.Traffic..kbps.==10")
+P("pmConsumedEnergy|DL.Traffic..kbps.==15")
+
+
+P("pmConsumedEnergy|qRxLevMin.Serving..dBm.==-138")
+P("pmConsumedEnergy|qRxLevMin.Serving..dBm.==-124")
+P("pmConsumedEnergy|qRxLevMin.Serving..dBm.==-122")
+P("pmConsumedEnergy|qRxLevMin.Serving..dBm.==-120")
+P("pmConsumedEnergy|qRxLevMin.Serving..dBm.==-118")
+P("pmConsumedEnergy|qRxLevMin.Serving..dBm.==-114")
+
+
+P("pmConsumedEnergy|Num.TX.Antennas==1")
+P("pmConsumedEnergy|Num.TX.Antennas==2")
+P("pmConsumedEnergy|Num.TX.Antennas==4")
+
+
+P("pmConsumedEnergy|Central.Freq==850")
+P("pmConsumedEnergy|Central.Freq==2100")
+P("pmConsumedEnergy|Central.Freq==2150")
+P("pmConsumedEnergy|Central.Freq==2585")
+P("pmConsumedEnergy|Central.Freq==5230")
+
+
+```
+
+### Graph to show relation between variables
+
+```{r}
+# The query_evidence_relation function evaluates the Probability of all the nodes related to "pmConsumedEnergy" given different values of "pmConsumedEnergy"
+
+
+
+#_____________________________
+#Function
+#_____________________________
+
+
+query_evidence_relation<-function(query_node,evidence_node)
+  {
+    out_query<-list(1,2,3,4)
+    for(j in 1:length(evidence_node))
+      {
+      levs<-unique(analysis_1.data_discrete[,evidence_node[j]])
+      for(i in 1:length(levs))
+        {
+         cmd1<-paste("P('",query_node,"|",evidence_node[j],"==",levs[i],"')",sep="")
+         a<-eval(parse(text=cmd1))
+         out_query[[j]][i]<-a$Var1
+         }
+    }
+  return(out_query)
+}
+
+#_____________________________
+
+
+output<-query_evidence_relation("pmConsumedEnergy",parent)
+x<-NULL
+y<-NULL
+z<-NULL
+for(i in 1:length(parent)){
+x<-c(x,output[[i]])
+y<-c(y,as.vector(unique(analysis_1.data_discrete[,parent[i]])))
+z<-c(z,rep(parent[i],length(unique(analysis_1.data_discrete[,parent[i]]))))
+output1<-data.frame(y,x,z)
+output1$y<-as.numeric(as.vector(output1$y))
+}
+
+
+library(ggplot2)
+ggplot(data=output1)+
+  geom_line(aes(x=x,y=y,group=z),linetype=5)+
+  facet_wrap(~z,scales = "free")+
+  theme_bw()
+  
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r,eval=FALSE,echo=FALSE}
+# The query_evidence_relation function evaluates the Probability of all the nodes related to "pmConsumedEnergy" given different values of "pmConsumedEnergy"
+#_____________________________
+#Function
+#_____________________________
+
+
+query_evidence_relation<-function(query_node,evidence_node){
+  out_evi<-data.frame(matrix(ncol = length(parent),nrow=15))
+for(i in 1:length(levels(analysis_1.data_discrete[,query_node])))
+  {
+  
+  #this part is to check the number of evidence nodes.
+  if(length(evidence_node)==1){
+    evi_node<-evidence_node
+  }
+  else{
+  evi_node<-paste(evidence_node,collapse = ";")
+  }
+  
+  cmd1<-paste("P('",evi_node,"|",query_node,"==",i,"')",sep="")
+  a<-eval(parse(text=cmd1))
+  for(j in 1:(length(a)-1))
+  {
+    out_evi[i,j]<-a[j]
+  }
+}
+  return(out_evi)
+}
+
+
+#_____________________________
+
+
+output<-query_evidence_relation("pmConsumedEnergy",parent)
+colnames(output)<-parent
+
+library(tidyverse)
+output_new<-gather(output, variable, values)
+output_new$pmConsumedEnergy<-rep(1:15,length(parent))
+
+library(ggplot2)
+ggplot(data=output_new)+
+  geom_line(aes(x=pmConsumedEnergy,y=values),linetype=5)+
+  facet_wrap(~variable,scales = "free")+
+  theme_bw()
+  
+```
+
+
+
+
+
+```{r,eval=FALSE,echo=FALSE}
+## Conditional Independence Example
+
+Lets fix the value of Markov Blanket nodes and see if changing other node state change the state of pmConsumedEnergy node
+
+
+correlated_with_pmConsumedEnergy<-cor(analysis_1.data[numeric_vars])[,"pmConsumedEnergy"]
+
+correlated_with_pmConsumedEnergy<-data.frame(correlation=correlated_with_pmConsumedEnergy)
+correlated_with_pmConsumedEnergy$nodes<-rownames(correlated_with_pmConsumedEnergy)
+
+correlated_with_pmConsumedEnergy %>% arrange(desc(correlation))
+```
+
+
+
+```{r,eval=FALSE,echo=FALSE}
+P("pmConsumedEnergy|a1a2SearchThresholdRsrq..dB.==-15;DL.Traffic..kbps.==1;configuredMaxTxPower==1;Contiguity==1")
+P("pmConsumedEnergy|a1a2SearchThresholdRsrq..dB.==-15;DL.Traffic..kbps.==1;configuredMaxTxPower==1;Contiguity==5")
+P("pmConsumedEnergy|a1a2SearchThresholdRsrq..dB.==-15;DL.Traffic..kbps.==1;configuredMaxTxPower==1;Contiguity==10")
+P("pmConsumedEnergy|a1a2SearchThresholdRsrq..dB.==-15;DL.Traffic..kbps.==1;configuredMaxTxPower==1;Contiguity==15")
+
+P("pmConsumedEnergy|a1a2SearchThresholdRsrq..dB.==-15;DL.Traffic..kbps.==1;configuredMaxTxPower==1;Contiguity==1")
+P("pmConsumedEnergy|a1a2SearchThresholdRsrq..dB.==-15;DL.Traffic..kbps.==1;configuredMaxTxPower==5;Contiguity==1")
+P("pmConsumedEnergy|a1a2SearchThresholdRsrq..dB.==-15;DL.Traffic..kbps.==1;configuredMaxTxPower==10;Contiguity==1")
+P("pmConsumedEnergy|a1a2SearchThresholdRsrq..dB.==-15;DL.Traffic..kbps.==1;configuredMaxTxPower==15;Contiguity==1")
+
+
+
+
+analysis_1.data_discrete$Num.Calls
+```
+
+
+
+
+
+
+```{r,eval=FALSE,echo=FALSE}
+
+
+## All the variables that are affected by changing "pmConsumedEnergy" node value.
+
+I am using the correlation 
+
+
+set.seed(123)
+suppressWarnings(
+    
+    
+    asdss<- cbind(
+        select(
+            analysis_1.data,
+            -all_of(numeric_vars)
+        ),
+        discretizeDF(
+            as.data.frame(
+                select(
+                    analysis_1.data,
+                    all_of(numeric_vars)
+                )
+            ),
+            default = list(method = "interval", 
+                           breaks = 15,
+                           dig.lab = 6
+                          )
+        )
+    )
+  
+)
+
+
+
+kk<-select_if(data,is.numeric)
+ckkk<-kk %>% filter(pmConsumedEnergy> 0)
+
+
+correlation<-function(node,data){
+  d<-select_if(data,is.numeric)
+  node<-which(colnames(d)==node)
+  correl<-round(cor(d)[,node],2)
+  vars<-rownames(as.data.frame(correl))
+  data.frame(vars,correl) %>% arrange(desc(abs(correl)))
+}
+
+correlation("pmConsumedEnergy",ckkk)
+
+
+```
+
+

@@ -1,0 +1,14 @@
+name: code
+title: code
+username:
+account: ganesh-sharma
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 9410156
+bundleId: 7421917
+url: https://ganesh-sharma.shinyapps.io/code/
+when: 1688553426.7364
+lastSyncTime: 1688553426.73642
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: bna.Rmd
